@@ -300,6 +300,15 @@ export default {
       return new Response(html, { headers });
     }
 
+    // ── /a: always serve Variant A directly (for review/testing) ─────────────
+    if (p === '/a' || p === '/a/') {
+      const asset = await env.ASSETS.fetch(new URL('/index-a.html', request.url).toString());
+      let html = await asset.text();
+      if (!html.includes('ldr_utm_source')) html = html.replace('</head>', UTM_SAVE_SCRIPT + '\n</head>');
+      if (!html.includes('data-ldr-call')) html = html.replace('</body>', CALL_TRACK_SCRIPT + '\n</body>');
+      return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    }
+
     // ── /b: always serve Variant B directly (for review/testing) ─────────────
     if (p === '/b' || p === '/b/') {
       const asset = await env.ASSETS.fetch(new URL('/index-b.html', request.url).toString());
