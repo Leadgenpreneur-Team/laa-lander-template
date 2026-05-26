@@ -1,4 +1,4 @@
-# djm-lander-template
+# LAA-lander-template
 
 **Type:** DJM A/B landing page template
 **Managed by:** Strive Marketing / Dirty Job Marketing
