@@ -68,14 +68,28 @@ function json(data, status = 200) {
   });
 }
 
-async function trackEvent(env, variant, eventType, utms = {}, extra = {}) {
+// Cached per worker instance (cleared on each deploy)
+let _cachedRound = null;
+
+async function getCurrentRound(env) {
+  if (_cachedRound !== null) return _cachedRound;
+  try {
+    const row = await env.DB.prepare('SELECT MAX(round_number) as r FROM rounds').first();
+    _cachedRound = (row && row.r != null) ? row.r : 1;
+  } catch {
+    _cachedRound = 1;
+  }
+  return _cachedRound;
+}
+
+async function trackEvent(env, round, variant, eventType, utms = {}, extra = {}) {
   await env.DB.prepare(
-    `INSERT INTO events (variant, event_type, device, lead_name, lead_email, lead_phone,
+    `INSERT INTO events (round, variant, event_type, device, lead_name, lead_email, lead_phone,
       utm_source, utm_medium, utm_campaign, utm_content, utm_term,
       gclid, campaign_id, ad_group_id, keyword, match_type, network)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
-    variant, eventType,
+    round, variant, eventType,
     extra.device     || null,
     extra.lead_name  || null,
     extra.lead_email || null,
@@ -102,7 +116,8 @@ export default {
       const { event_type, variant, device, name, email, phone, utms = {} } = body;
       if (!['pageview','lead','call'].includes(event_type)) return json({ error: 'invalid event' }, 400);
       if (!['a','b'].includes(variant)) return json({ error: 'invalid variant' }, 400);
-      await trackEvent(env, variant, event_type, {
+      const round = await getCurrentRound(env);
+      await trackEvent(env, round, variant, event_type, {
         utm_source: utms.utm_source || null, utm_medium: utms.utm_medium || null,
         utm_campaign: utms.utm_campaign || null, utm_content: utms.utm_content || null,
         utm_term: utms.utm_term || null, gclid: utms.gclid || null,
@@ -116,15 +131,52 @@ export default {
     if (p === '/api/ab-stats') {
       if (url.searchParams.get('token') !== env.REPORTS_TOKEN) return json({ error: 'Unauthorized' }, 401);
       if (!env.DB) return json({ error: 'DB not configured' }, 500);
+
+      // Fetch all rounds metadata
+      let roundsData = [];
+      let currentRoundNum = 1;
+      try {
+        const roundsResult = await env.DB.prepare(
+          'SELECT round_number, variant_a_label, variant_b_label, started_at FROM rounds ORDER BY round_number'
+        ).all();
+        roundsData = roundsResult.results;
+        if (roundsData.length > 0) {
+          currentRoundNum = roundsData[roundsData.length - 1].round_number;
+        }
+      } catch {
+        // rounds table not yet created — fall back to unfiltered behavior
+      }
+
+      const roundParam = url.searchParams.get('round');
+      const targetRound = roundParam ? parseInt(roundParam, 10) : currentRoundNum;
+
       const s = url.searchParams.get('start'), e = url.searchParams.get('end');
       const hasRange = s && e;
       const archWhere = '(archived IS NULL OR archived = 0)';
-      const dateFilter = hasRange ? `WHERE ${archWhere} AND created_at >= ? AND created_at <= ?` : `WHERE ${archWhere}`;
-      const binds = hasRange ? [s + ' 00:00:00', e + ' 23:59:59'] : [];
+
+      let WHERE, binds;
+      if (roundsData.length > 0) {
+        if (hasRange) {
+          WHERE = `WHERE ${archWhere} AND round = ? AND created_at >= ? AND created_at <= ?`;
+          binds = [targetRound, s + ' 00:00:00', e + ' 23:59:59'];
+        } else {
+          WHERE = `WHERE ${archWhere} AND round = ?`;
+          binds = [targetRound];
+        }
+      } else {
+        if (hasRange) {
+          WHERE = `WHERE ${archWhere} AND created_at >= ? AND created_at <= ?`;
+          binds = [s + ' 00:00:00', e + ' 23:59:59'];
+        } else {
+          WHERE = `WHERE ${archWhere}`;
+          binds = [];
+        }
+      }
+
       const [stats, devices, recent, audit] = await Promise.all([
-        env.DB.prepare(`SELECT variant, event_type, COUNT(*) as count FROM events ${dateFilter} GROUP BY variant, event_type`).bind(...binds).all(),
-        env.DB.prepare(`SELECT device, event_type, COUNT(*) as count FROM events ${dateFilter} GROUP BY device, event_type`).bind(...binds).all(),
-        env.DB.prepare(`SELECT id, variant, event_type, device, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, gclid, campaign_id, ad_group_id, keyword, match_type, network, created_at FROM events ${dateFilter} ORDER BY id DESC LIMIT 200`).bind(...binds).all(),
+        env.DB.prepare(`SELECT variant, event_type, COUNT(*) as count FROM events ${WHERE} GROUP BY variant, event_type`).bind(...binds).all(),
+        env.DB.prepare(`SELECT device, event_type, COUNT(*) as count FROM events ${WHERE} GROUP BY device, event_type`).bind(...binds).all(),
+        env.DB.prepare(`SELECT id, round, variant, event_type, device, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, gclid, campaign_id, ad_group_id, keyword, match_type, network, created_at FROM events ${WHERE} ORDER BY id DESC LIMIT 200`).bind(...binds).all(),
         env.DB.prepare(`SELECT id, action, detail, created_at FROM audit_log ORDER BY id DESC LIMIT 100`).all(),
       ]);
       const variants = ['a', 'b'];
@@ -151,7 +203,17 @@ export default {
         variantData[v] = { views: c.pageview, leads: c.lead, calls: c.call, lead_cvr: c.pageview > 0 ? +((c.lead / c.pageview) * 100).toFixed(1) : 0 };
         totalViews += c.pageview; totalLeads += c.lead; totalCalls += c.call;
       }
-      return json({ variants: variantData, total: { views: totalViews, leads: totalLeads, calls: totalCalls }, devices: { mobile: buildDevice('mobile'), desktop: buildDevice('desktop') }, events: recent.results, audit_log: audit.results, updated_at: new Date().toISOString() });
+      return json({
+        rounds: roundsData,
+        current_round: currentRoundNum,
+        round: targetRound,
+        variants: variantData,
+        total: { views: totalViews, leads: totalLeads, calls: totalCalls },
+        devices: { mobile: buildDevice('mobile'), desktop: buildDevice('desktop') },
+        events: recent.results,
+        audit_log: audit.results,
+        updated_at: new Date().toISOString(),
+      });
     }
 
     if (p === '/api/all-leads') {
@@ -161,7 +223,7 @@ export default {
       const hasRange = s && e;
       const dateFilter = hasRange ? "WHERE event_type = 'lead' AND created_at >= ? AND created_at <= ?" : "WHERE event_type = 'lead'";
       const binds = hasRange ? [s + ' 00:00:00', e + ' 23:59:59'] : [];
-      const result = await env.DB.prepare(`SELECT id, variant, event_type, device, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, gclid, campaign_id, ad_group_id, keyword, match_type, network, created_at FROM events ${dateFilter} ORDER BY id DESC LIMIT 1000`).bind(...binds).all();
+      const result = await env.DB.prepare(`SELECT id, round, variant, event_type, device, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, gclid, campaign_id, ad_group_id, keyword, match_type, network, created_at FROM events ${dateFilter} ORDER BY id DESC LIMIT 1000`).bind(...binds).all();
       return json({ events: result.results });
     }
 
@@ -262,9 +324,7 @@ export default {
         .replace(/__PROJECT_SUBTITLE__/g, new URL(request.url).host + ' — ' + (env.PROJECT_NAME || 'Lander'))
         .replace(/__PROJECT_SLUG__/g,    env.PROJECT_SLUG     || 'project')
         .replace(/__REPORTS_TOKEN__/g,   env.REPORTS_TOKEN    || 'CHANGE_ME')
-        .replace(/__VARIANT_A_LABEL__/g, env.VARIANT_A_LABEL  || 'Variant A')
         .replace(/__VARIANT_A_URL__/g,   env.VARIANT_A_URL    || '/')
-        .replace(/__VARIANT_B_LABEL__/g, env.VARIANT_B_LABEL  || 'Variant B')
         .replace(/__VARIANT_B_URL__/g,   env.VARIANT_B_URL    || '/b');
       return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     }
@@ -283,7 +343,9 @@ export default {
       if (isNew && env.DB && !isBot(request)) {
         const ua     = request.headers.get('User-Agent') || '';
         const device = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) ? 'mobile' : 'desktop';
-        trackEvent(env, variant, 'pageview', extractUtms(url), { device }).catch(() => {});
+        getCurrentRound(env).then(round =>
+          trackEvent(env, round, variant, 'pageview', extractUtms(url), { device }).catch(() => {})
+        ).catch(() => {});
       }
 
       const variantUrl = new URL(url);

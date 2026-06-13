@@ -28,6 +28,7 @@
     .dash-tabs { display: flex; gap: 0; border-bottom: 1px solid #e5e7eb; padding: 0 1.5rem; }
     .dash-tab { background: none; border: none; border-bottom: 2px solid transparent; color: #6b7280; cursor: pointer; font-size: 0.8125rem; font-weight: 600; padding: 0.625rem 1rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: -1px; }
     .dash-tab.active { border-bottom-color: #3b82f6; color: #3b82f6; }
+    .round-live-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; vertical-align: middle; margin-left: 4px; }
 
     .date-bar { display: flex; align-items: center; gap: 1rem; padding: 0.625rem 1.5rem; flex-wrap: wrap; border-bottom: 1px solid #e5e7eb; background: #fff; }
     .date-presets { display: flex; gap: 0.375rem; flex-wrap: wrap; }
@@ -167,10 +168,7 @@
       </div>
     </div>
 
-    <div class="dash-tabs">
-      <button type="button" class="dash-tab active" data-tab="ab">A/B Results</button>
-      <button type="button" class="dash-tab" data-tab="leads">All Leads</button>
-    </div>
+    <div id="round-tabs" class="dash-tabs"><!-- Dynamically populated by JS once rounds are fetched --></div>
 
     <div id="date-bar-ab" class="date-bar">
       <div class="date-presets">
@@ -225,7 +223,7 @@
           <div class="vc-label-group">
             <span class="vc-badge vc-badge-a">A</span>
             <div>
-              <span class="vc-label-text">__VARIANT_A_LABEL__</span>
+              <span class="vc-label-text" id="variant-a-label">—</span>
               <a href="__VARIANT_A_URL__" target="_blank" rel="noopener" class="vc-url">__VARIANT_A_URL__</a>
             </div>
           </div>
@@ -253,7 +251,7 @@
           <div class="vc-label-group">
             <span class="vc-badge vc-badge-b">B</span>
             <div>
-              <span class="vc-label-text">__VARIANT_B_LABEL__</span>
+              <span class="vc-label-text" id="variant-b-label">—</span>
               <a href="__VARIANT_B_URL__" target="_blank" rel="noopener" class="vc-url">__VARIANT_B_URL__</a>
             </div>
           </div>
@@ -407,7 +405,9 @@
 <script>
   const TOKEN = '__REPORTS_TOKEN__';
   let currentEvents = [], currentLeads = [], activeFilter = 'all', rowLimit = 100, eventsPage = 1;
-  let currentStart = null, currentEnd = null, leadsStart = null, leadsEnd = null, activeTab = 'ab';
+  let currentStart = null, currentEnd = null, leadsStart = null, leadsEnd = null;
+  let activeTab = 'round'; // 'round' | 'leads'
+  let allRounds = [], activeRound = null, tabsInitialized = false;
 
   function formatPacific(ts) {
     if (!ts) return { date: '—', time: '—' };
@@ -430,18 +430,55 @@
     return [null, null];
   }
 
-  // Tabs
-  document.querySelectorAll('.dash-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      activeTab = btn.dataset.tab;
-      document.querySelectorAll('.dash-tab').forEach(b => b.classList.toggle('active', b === btn));
-      document.getElementById('date-bar-ab').hidden    = activeTab !== 'ab';
-      document.getElementById('date-bar-leads').hidden = activeTab !== 'leads';
-      document.getElementById('section-ab').hidden     = activeTab !== 'ab';
-      document.getElementById('section-leads').hidden  = activeTab !== 'leads';
-      if (activeTab === 'leads') loadAllLeads();
+  // Round tab initialization — called once on first API response
+  function initRoundTabs(rounds, currentRound) {
+    allRounds = rounds;
+    if (activeRound === null) activeRound = currentRound;
+    const container = document.getElementById('round-tabs');
+    container.innerHTML = '';
+
+    rounds.forEach(r => {
+      const isLive = r.round_number === currentRound;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'dash-tab' + (r.round_number === activeRound && activeTab === 'round' ? ' active' : '');
+      btn.dataset.round = String(r.round_number);
+      btn.innerHTML = 'Round ' + r.round_number + (isLive ? ' <span class="round-live-dot"></span>' : '');
+      btn.addEventListener('click', () => {
+        activeRound = r.round_number;
+        activeTab = 'round';
+        syncTabUI();
+        loadStats();
+      });
+      container.appendChild(btn);
     });
-  });
+
+    const leadsBtn = document.createElement('button');
+    leadsBtn.type = 'button';
+    leadsBtn.className = 'dash-tab' + (activeTab === 'leads' ? ' active' : '');
+    leadsBtn.dataset.tab = 'leads';
+    leadsBtn.textContent = 'All Leads';
+    leadsBtn.addEventListener('click', () => {
+      activeTab = 'leads';
+      syncTabUI();
+      loadAllLeads();
+    });
+    container.appendChild(leadsBtn);
+
+    tabsInitialized = true;
+  }
+
+  function syncTabUI() {
+    document.querySelectorAll('#round-tabs .dash-tab').forEach(b => {
+      const isActiveRound = b.dataset.round && parseInt(b.dataset.round) === activeRound && activeTab === 'round';
+      const isLeads = b.dataset.tab === 'leads' && activeTab === 'leads';
+      b.classList.toggle('active', isActiveRound || isLeads);
+    });
+    document.getElementById('date-bar-ab').hidden    = activeTab !== 'round';
+    document.getElementById('date-bar-leads').hidden = activeTab !== 'leads';
+    document.getElementById('section-ab').hidden     = activeTab !== 'round';
+    document.getElementById('section-leads').hidden  = activeTab !== 'leads';
+  }
 
   // Date presets
   document.querySelectorAll('.date-preset-btn').forEach(btn => {
@@ -492,7 +529,7 @@
 
   // Refresh / Reset
   document.getElementById('refresh-btn').addEventListener('click', () => {
-    if (activeTab === 'ab') loadStats(); else loadAllLeads();
+    if (activeTab === 'round') loadStats(); else loadAllLeads();
   });
   document.getElementById('reset-btn').addEventListener('click', async () => {
     if (!confirm('Archive all current stats? Leads are preserved in All Leads tab.')) return;
@@ -516,10 +553,10 @@
   });
 
   // CSV export
-  const CSV_HEADERS = ['ID','Variant','Date','Time (PT)','Event','Name','Email','Phone','Campaign','Term','Content','Campaign ID','GCLID','Device'];
+  const CSV_HEADERS = ['ID','Round','Variant','Date','Time (PT)','Event','Name','Email','Phone','Campaign','Term','Content','Campaign ID','GCLID','Device'];
   function toCSVRow(e) {
     const { date, time } = formatPacific(e.created_at);
-    return [e.id, e.variant, date, time, e.event_type||'', e.lead_name||'', e.lead_email||'', e.lead_phone||'', e.utm_campaign||'', e.utm_term||'', e.utm_content||'', e.campaign_id||'', e.gclid||'', e.device||'']
+    return [e.id, e.round||'', e.variant, date, time, e.event_type||'', e.lead_name||'', e.lead_email||'', e.lead_phone||'', e.utm_campaign||'', e.utm_term||'', e.utm_content||'', e.campaign_id||'', e.gclid||'', e.device||'']
       .map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
   }
   function downloadCSV(rows, filename) {
@@ -538,9 +575,26 @@
       const params = new URLSearchParams({ token: TOKEN });
       if (currentStart) params.set('start', currentStart);
       if (currentEnd)   params.set('end',   currentEnd);
+      if (activeRound !== null) params.set('round', activeRound);
       const r = await fetch(`/api/ab-stats?${params}`);
       const d = await r.json();
       if (d.error) throw new Error(d.error);
+
+      // Initialize round tabs on first load
+      if (d.rounds && d.rounds.length > 0 && !tabsInitialized) {
+        initRoundTabs(d.rounds, d.current_round);
+        syncTabUI();
+      }
+
+      // Update variant label cards for the selected round
+      if (allRounds.length > 0) {
+        const roundMeta = allRounds.find(rr => rr.round_number === (activeRound || d.current_round));
+        if (roundMeta) {
+          document.getElementById('variant-a-label').textContent = roundMeta.variant_a_label || 'Variant A';
+          document.getElementById('variant-b-label').textContent = roundMeta.variant_b_label || 'Variant B';
+        }
+      }
+
       renderStats(d);
     } catch (err) {
       document.getElementById('loading').innerHTML = `<p style="color:#ef4444;font-size:0.875rem;">Failed to load: ${err.message}</p>`;
