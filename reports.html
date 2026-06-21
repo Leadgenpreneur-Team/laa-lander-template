@@ -47,8 +47,15 @@
 
     .dash-content { padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; max-width: 1600px; width: 100%; margin: 0 auto; }
 
-    .variants-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .variants-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
     @media (max-width: 700px) { .variants-row { grid-template-columns: 1fr; } }
+    .vc-column { display: flex; flex-direction: column; gap: 1rem; border-radius: 16px; padding: 1rem; }
+    .vc-column-a { background: rgba(59,130,246,0.04); border: 1px solid rgba(59,130,246,0.12); }
+    .vc-column-b { background: rgba(99,102,241,0.04); border: 1px solid rgba(99,102,241,0.12); }
+    .vc-column-title { font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; padding-bottom: 0.25rem; }
+    .vc-column-a .vc-column-title { color: #3b82f6; }
+    .vc-column-b .vc-column-title { color: #6366f1; }
+    .vc-section-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; margin-top: 0.25rem; }
     .vc-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
     .vc-top { display: flex; align-items: flex-start; justify-content: space-between; }
     .vc-label-group { display: flex; align-items: flex-start; gap: 0.75rem; }
@@ -149,6 +156,23 @@
     .modal-actions { display: flex; justify-content: flex-end; gap: 0.625rem; margin-top: 0.25rem; }
     .modal-save-btn { background: #3b82f6; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-size: 0.8rem; font-weight: 700; padding: 0.5rem 1.25rem; }
     .modal-save-btn:hover { background: #2563eb; }
+
+    .round-info { display: flex; align-items: center; justify-content: center; gap: 0.75rem; padding: 0.625rem 1.5rem; background: #f9fafb; border-bottom: 1px solid #e5e7eb; flex-wrap: wrap; }
+    .round-info-item { font-size: 0.75rem; color: #6b7280; display: flex; align-items: center; gap: 0.35rem; }
+    .round-info-item strong { color: #111; font-weight: 700; }
+    .round-info-dot { width: 4px; height: 4px; border-radius: 50%; background: #d1d5db; flex-shrink: 0; }
+
+    .sig-banner { display: flex; align-items: center; gap: 0.75rem; padding: 0.875rem 1.25rem; border-radius: 12px; border: 1px solid; font-size: 0.8125rem; }
+    .sig-banner-icon { font-size: 1.1rem; flex-shrink: 0; }
+    .sig-banner-text { flex: 1; }
+    .sig-banner-text strong { font-weight: 700; }
+    .sig-banner-text span { display: block; font-size: 0.72rem; margin-top: 0.15rem; opacity: 0.8; }
+    .sig-low { background: #f9fafb; border-color: #e5e7eb; color: #6b7280; }
+    .sig-none { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+    .sig-trending { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
+    .sig-likely { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+    .sig-confident { background: #f0fdf4; border-color: #86efac; color: #14532d; }
+
   </style>
 </head>
 <body>
@@ -216,93 +240,149 @@
 
   <main id="dash-content" class="dash-content" hidden>
 
+    <!-- Round info bar: days running + dates -->
+    <div id="round-info-bar" class="round-info" hidden></div>
+
+    <!-- Statistical significance banner -->
+    <div id="sig-banner" hidden></div>
+
+    <!-- Variant columns: A on left, B on right — stats + device breakdown grouped per variant -->
     <section class="variants-row">
-      <!-- Variant A -->
-      <div class="vc-card">
-        <div class="vc-top">
-          <div class="vc-label-group">
-            <span class="vc-badge vc-badge-a">A</span>
-            <div>
-              <span class="vc-label-text" id="variant-a-label">—</span>
-              <a href="__VARIANT_A_URL__" target="_blank" rel="noopener" class="vc-url">__VARIANT_A_URL__</a>
+      <!-- Variant A column -->
+      <div class="vc-column vc-column-a">
+        <span class="vc-column-title">Variant A</span>
+        <div class="vc-card">
+          <div class="vc-top">
+            <div class="vc-label-group">
+              <span class="vc-badge vc-badge-a">A</span>
+              <div>
+                <span class="vc-label-text" id="variant-a-label">—</span>
+                <a href="__VARIANT_A_URL__" target="_blank" rel="noopener" class="vc-url">__VARIANT_A_URL__</a>
+              </div>
+            </div>
+            <span id="winner-a" class="winner-chip" hidden>★ Leading</span>
+          </div>
+          <div class="vc-metrics">
+            <div class="vc-metric"><span id="a-views" class="vc-num">—</span><span class="vc-metric-label">Visitors</span></div>
+            <div class="vc-metric"><span id="a-leads" class="vc-num vc-num-green">—</span><span class="vc-metric-label">Form Submission Leads</span></div>
+            <div class="vc-metric"><span id="a-calls" class="vc-num vc-num-gold">—</span><span class="vc-metric-label">Clicks On Call Button</span></div>
+          </div>
+          <div class="vc-cvr-row">
+            <div class="vc-cvr-item">
+              <span class="vc-cvr-label">Lead Conv. Rate</span>
+              <div class="vc-bar-row">
+                <div class="vc-track"><div id="a-bar" class="vc-fill vc-fill-a" style="width:0%"></div></div>
+                <span id="a-bar-label" class="vc-bar-label">—</span>
+              </div>
             </div>
           </div>
-          <span id="winner-a" class="winner-chip" hidden>★ Leading</span>
         </div>
-        <div class="vc-metrics">
-          <div class="vc-metric"><span id="a-views" class="vc-num">—</span><span class="vc-metric-label">Visitors</span></div>
-          <div class="vc-metric"><span id="a-leads" class="vc-num vc-num-green">—</span><span class="vc-metric-label">Leads</span></div>
-          <div class="vc-metric"><span id="a-calls" class="vc-num vc-num-gold">—</span><span class="vc-metric-label">Clicks On Call Button</span></div>
+        <span class="vc-section-label">Variant A — Mobile</span>
+        <div class="device-card">
+          <div class="device-card-top"><span class="device-icon">📱</span><span class="device-label">Mobile</span></div>
+          <div class="device-stats">
+            <div class="device-stat"><span id="a-mob-views" class="device-num">—</span><span class="device-stat-label">Visitors</span></div>
+            <div class="device-stat"><span id="a-mob-leads" class="device-num device-green">—</span><span class="device-stat-label">Form Submission Leads</span></div>
+            <div class="device-stat"><span id="a-mob-calls" class="device-num device-gold">—</span><span class="device-stat-label">Call Clicks</span></div>
+            <div class="device-stat"><span id="a-mob-cvr" class="device-num device-gold">—</span><span class="device-stat-label">Conv. Rate</span></div>
+          </div>
         </div>
-        <div class="vc-cvr-row">
-          <div class="vc-cvr-item">
-            <span class="vc-cvr-label">Lead CVR</span>
-            <div class="vc-bar-row">
-              <div class="vc-track"><div id="a-bar" class="vc-fill vc-fill-a" style="width:0%"></div></div>
-              <span id="a-bar-label" class="vc-bar-label">—</span>
-            </div>
+        <span class="vc-section-label">Variant A — Desktop</span>
+        <div class="device-card">
+          <div class="device-card-top"><span class="device-icon">🖥</span><span class="device-label">Desktop</span></div>
+          <div class="device-stats">
+            <div class="device-stat"><span id="a-desk-views" class="device-num">—</span><span class="device-stat-label">Visitors</span></div>
+            <div class="device-stat"><span id="a-desk-leads" class="device-num device-green">—</span><span class="device-stat-label">Form Submission Leads</span></div>
+            <div class="device-stat"><span id="a-desk-calls" class="device-num device-gold">—</span><span class="device-stat-label">Call Clicks</span></div>
+            <div class="device-stat"><span id="a-desk-cvr" class="device-num device-gold">—</span><span class="device-stat-label">Conv. Rate</span></div>
           </div>
         </div>
       </div>
 
-      <!-- Variant B -->
-      <div class="vc-card">
-        <div class="vc-top">
-          <div class="vc-label-group">
-            <span class="vc-badge vc-badge-b">B</span>
-            <div>
-              <span class="vc-label-text" id="variant-b-label">—</span>
-              <a href="__VARIANT_B_URL__" target="_blank" rel="noopener" class="vc-url">__VARIANT_B_URL__</a>
+      <!-- Variant B column -->
+      <div class="vc-column vc-column-b">
+        <span class="vc-column-title">Variant B</span>
+        <div class="vc-card">
+          <div class="vc-top">
+            <div class="vc-label-group">
+              <span class="vc-badge vc-badge-b">B</span>
+              <div>
+                <span class="vc-label-text" id="variant-b-label">—</span>
+                <a href="__VARIANT_B_URL__" target="_blank" rel="noopener" class="vc-url">__VARIANT_B_URL__</a>
+              </div>
+            </div>
+            <span id="winner-b" class="winner-chip" hidden>★ Leading</span>
+          </div>
+          <div class="vc-metrics">
+            <div class="vc-metric"><span id="b-views" class="vc-num">—</span><span class="vc-metric-label">Visitors</span></div>
+            <div class="vc-metric"><span id="b-leads" class="vc-num vc-num-green">—</span><span class="vc-metric-label">Form Submission Leads</span></div>
+            <div class="vc-metric"><span id="b-calls" class="vc-num vc-num-gold">—</span><span class="vc-metric-label">Clicks On Call Button</span></div>
+          </div>
+          <div class="vc-cvr-row">
+            <div class="vc-cvr-item">
+              <span class="vc-cvr-label">Lead Conv. Rate</span>
+              <div class="vc-bar-row">
+                <div class="vc-track"><div id="b-bar" class="vc-fill vc-fill-b" style="width:0%"></div></div>
+                <span id="b-bar-label" class="vc-bar-label">—</span>
+              </div>
             </div>
           </div>
-          <span id="winner-b" class="winner-chip" hidden>★ Leading</span>
         </div>
-        <div class="vc-metrics">
-          <div class="vc-metric"><span id="b-views" class="vc-num">—</span><span class="vc-metric-label">Visitors</span></div>
-          <div class="vc-metric"><span id="b-leads" class="vc-num vc-num-green">—</span><span class="vc-metric-label">Leads</span></div>
-          <div class="vc-metric"><span id="b-calls" class="vc-num vc-num-gold">—</span><span class="vc-metric-label">Clicks On Call Button</span></div>
+        <span class="vc-section-label">Variant B — Mobile</span>
+        <div class="device-card">
+          <div class="device-card-top"><span class="device-icon">📱</span><span class="device-label">Mobile</span></div>
+          <div class="device-stats">
+            <div class="device-stat"><span id="b-mob-views" class="device-num">—</span><span class="device-stat-label">Visitors</span></div>
+            <div class="device-stat"><span id="b-mob-leads" class="device-num device-green">—</span><span class="device-stat-label">Form Submission Leads</span></div>
+            <div class="device-stat"><span id="b-mob-calls" class="device-num device-gold">—</span><span class="device-stat-label">Call Clicks</span></div>
+            <div class="device-stat"><span id="b-mob-cvr" class="device-num device-gold">—</span><span class="device-stat-label">Conv. Rate</span></div>
+          </div>
         </div>
-        <div class="vc-cvr-row">
-          <div class="vc-cvr-item">
-            <span class="vc-cvr-label">Lead CVR</span>
-            <div class="vc-bar-row">
-              <div class="vc-track"><div id="b-bar" class="vc-fill vc-fill-b" style="width:0%"></div></div>
-              <span id="b-bar-label" class="vc-bar-label">—</span>
-            </div>
+        <span class="vc-section-label">Variant B — Desktop</span>
+        <div class="device-card">
+          <div class="device-card-top"><span class="device-icon">🖥</span><span class="device-label">Desktop</span></div>
+          <div class="device-stats">
+            <div class="device-stat"><span id="b-desk-views" class="device-num">—</span><span class="device-stat-label">Visitors</span></div>
+            <div class="device-stat"><span id="b-desk-leads" class="device-num device-green">—</span><span class="device-stat-label">Form Submission Leads</span></div>
+            <div class="device-stat"><span id="b-desk-calls" class="device-num device-gold">—</span><span class="device-stat-label">Call Clicks</span></div>
+            <div class="device-stat"><span id="b-desk-cvr" class="device-num device-gold">—</span><span class="device-stat-label">Conv. Rate</span></div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Totals -->
+    <!-- Combined totals -->
+    <span class="vc-section-label" style="margin-bottom:-0.5rem;">Combined Performance — All Variants</span>
     <section class="totals-strip">
       <div class="total-cell"><span id="total-views" class="total-num">—</span><span class="total-label">Total Visitors</span></div>
       <div class="total-divider"></div>
-      <div class="total-cell"><span id="total-leads" class="total-num total-num-green">—</span><span class="total-label">Total Leads</span></div>
+      <div class="total-cell"><span id="total-leads" class="total-num total-num-green">—</span><span class="total-label">Total Form Submission Leads</span></div>
       <div class="total-divider"></div>
       <div class="total-cell"><span id="total-calls" class="total-num total-num-gold">—</span><span class="total-label">Total Call Clicks</span></div>
+      <div class="total-divider" id="qcalls-divider" style="display:none"></div>
+      <div class="total-cell" id="qcalls-cell" style="display:none"><span id="total-qcalls" class="total-num total-num-gold">—</span><span class="total-label">Qualified Calls</span></div>
       <div class="total-divider"></div>
-      <div class="total-cell"><span id="blended-cvr" class="total-num total-num-gold">—</span><span class="total-label">Blended CVR</span></div>
+      <div class="total-cell"><span id="blended-cvr" class="total-num total-num-gold">—</span><span class="total-label">Blended Conv. Rate</span></div>
     </section>
 
-    <!-- Device split -->
+    <!-- Combined device split -->
     <section class="device-split">
       <div class="device-card">
-        <div class="device-card-top"><span class="device-icon">📱</span><span class="device-label">Mobile</span></div>
+        <div class="device-card-top"><span class="device-icon">📱</span><span class="device-label">Combined Mobile</span></div>
         <div class="device-stats">
           <div class="device-stat"><span id="mob-views" class="device-num">—</span><span class="device-stat-label">Visitors</span></div>
-          <div class="device-stat"><span id="mob-leads" class="device-num device-green">—</span><span class="device-stat-label">Leads</span></div>
+          <div class="device-stat"><span id="mob-leads" class="device-num device-green">—</span><span class="device-stat-label">Form Submission Leads</span></div>
           <div class="device-stat"><span id="mob-calls" class="device-num device-gold">—</span><span class="device-stat-label">Call Clicks</span></div>
-          <div class="device-stat"><span id="mob-cvr" class="device-num device-gold">—</span><span class="device-stat-label">CVR</span></div>
+          <div class="device-stat"><span id="mob-cvr" class="device-num device-gold">—</span><span class="device-stat-label">Conv. Rate</span></div>
         </div>
       </div>
       <div class="device-card">
-        <div class="device-card-top"><span class="device-icon">🖥</span><span class="device-label">Desktop</span></div>
+        <div class="device-card-top"><span class="device-icon">🖥</span><span class="device-label">Combined Desktop</span></div>
         <div class="device-stats">
           <div class="device-stat"><span id="desk-views" class="device-num">—</span><span class="device-stat-label">Visitors</span></div>
-          <div class="device-stat"><span id="desk-leads" class="device-num device-green">—</span><span class="device-stat-label">Leads</span></div>
+          <div class="device-stat"><span id="desk-leads" class="device-num device-green">—</span><span class="device-stat-label">Form Submission Leads</span></div>
           <div class="device-stat"><span id="desk-calls" class="device-num device-gold">—</span><span class="device-stat-label">Call Clicks</span></div>
-          <div class="device-stat"><span id="desk-cvr" class="device-num device-gold">—</span><span class="device-stat-label">CVR</span></div>
+          <div class="device-stat"><span id="desk-cvr" class="device-num device-gold">—</span><span class="device-stat-label">Conv. Rate</span></div>
         </div>
       </div>
     </section>
@@ -314,7 +394,9 @@
         <div class="table-controls">
           <button class="filter-btn active" data-filter="all">All</button>
           <button class="filter-btn" data-filter="pageview">Pageviews</button>
-          <button class="filter-btn" data-filter="lead">Leads</button>
+          <button class="filter-btn" data-filter="lead">Form Submission Leads</button>
+          <button class="filter-btn" data-filter="call">Call Leads</button>
+          <button class="filter-btn" data-filter="all-leads">All Leads</button>
           <select id="rows-select" class="rows-select">
             <option value="20">20 rows</option>
             <option value="40">40 rows</option>
@@ -430,6 +512,7 @@
     return [null, null];
   }
 
+  // Tabs
   // Round tab initialization — called once on first API response
   function initRoundTabs(rounds, currentRound) {
     allRounds = rounds;
@@ -478,6 +561,8 @@
     document.getElementById('date-bar-leads').hidden = activeTab !== 'leads';
     document.getElementById('section-ab').hidden     = activeTab !== 'round';
     document.getElementById('section-leads').hidden  = activeTab !== 'leads';
+    document.getElementById('round-info-bar').hidden = activeTab !== 'round';
+    document.getElementById('sig-banner').hidden     = activeTab !== 'round';
   }
 
   // Date presets
@@ -601,6 +686,100 @@
     }
   }
 
+  // --- Statistical Significance (Z-test for proportions) ---
+  function calcSignificance(viewsA, leadsA, viewsB, leadsB) {
+    if (viewsA < 1 || viewsB < 1) return { level: 'low', pValue: 1, zScore: 0, confidence: 0 };
+    const pA = leadsA / viewsA, pB = leadsB / viewsB;
+    const pPool = (leadsA + leadsB) / (viewsA + viewsB);
+    const se = Math.sqrt(pPool * (1 - pPool) * (1/viewsA + 1/viewsB));
+    if (se === 0) return { level: 'low', pValue: 1, zScore: 0, confidence: 0 };
+    const z = Math.abs(pA - pB) / se;
+    // Approximate two-tailed p-value from z-score
+    const t = 1 / (1 + 0.2316419 * z);
+    const d2 = 0.3989423 * Math.exp(-z * z / 2);
+    const p2 = d2 * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    const pValue = 2 * p2;
+    const confidence = (1 - pValue) * 100;
+    let level = 'low';
+    if (viewsA + viewsB < 100) level = 'low';
+    else if (pValue <= 0.01) level = 'confident';
+    else if (pValue <= 0.05) level = 'likely';
+    else if (pValue <= 0.15) level = 'trending';
+    else level = 'none';
+    return { level, pValue, zScore: z, confidence: Math.min(confidence, 99.9) };
+  }
+
+  function renderSigBanner(d) {
+    const banner = document.getElementById('sig-banner');
+    const a = d.variants?.a || {}, b = d.variants?.b || {};
+    const result = calcSignificance(a.views||0, (a.leads||0)+(a.calls||0), b.views||0, (b.leads||0)+(b.calls||0));
+    const totalSamples = (a.views||0) + (b.views||0);
+
+    const aViews = a.views||0, bViews = b.views||0, aLeads = (a.leads||0)+(a.calls||0), bLeads = (b.leads||0)+(b.calls||0);
+    const configs = {
+      low:       { cls: 'sig-low',       icon: '📊', title: 'Not Enough Data To Determine A Winner',  desc: `Only ${totalSamples} total visitors so far (Variant A: ${aViews} visitors, ${aLeads} leads · Variant B: ${bViews} visitors, ${bLeads} leads). Need at least 100+ visitors per variant before the conversion rates are reliable enough to compare.` },
+      none:      { cls: 'sig-none',      icon: '⏳', title: 'No Clear Winner Yet',  desc: `${result.confidence.toFixed(1)}% confidence after ${totalSamples} visitors. The difference in conversion rates between Variant A (${aViews > 0 ? ((aLeads/aViews)*100).toFixed(1) : '0'}%) and Variant B (${bViews > 0 ? ((bLeads/bViews)*100).toFixed(1) : '0'}%) is not statistically significant yet. Keep the test running.` },
+      trending:  { cls: 'sig-trending',  icon: '📈', title: 'A Pattern Is Forming',         desc: `${result.confidence.toFixed(1)}% confidence — Variant A converting at ${aViews > 0 ? ((aLeads/aViews)*100).toFixed(1) : '0'}% vs Variant B at ${bViews > 0 ? ((bLeads/bViews)*100).toFixed(1) : '0'}%. Getting closer but not conclusive yet.` },
+      likely:    { cls: 'sig-likely',     icon: '✅', title: 'Likely Winner Found',    desc: `${result.confidence.toFixed(1)}% confidence — statistically significant. Variant A: ${aViews > 0 ? ((aLeads/aViews)*100).toFixed(1) : '0'}% conv. rate (${aLeads}/${aViews}) · Variant B: ${bViews > 0 ? ((bLeads/bViews)*100).toFixed(1) : '0'}% conv. rate (${bLeads}/${bViews}).` },
+      confident: { cls: 'sig-confident', icon: '🏆', title: 'Confident Winner', desc: `${result.confidence.toFixed(1)}% confidence — highly significant. Variant A: ${aViews > 0 ? ((aLeads/aViews)*100).toFixed(1) : '0'}% conv. rate (${aLeads}/${aViews}) · Variant B: ${bViews > 0 ? ((bLeads/bViews)*100).toFixed(1) : '0'}% conv. rate (${bLeads}/${bViews}).` },
+    };
+
+    const c = configs[result.level];
+    let winner = '';
+    if (result.level === 'likely' || result.level === 'confident') {
+      const aCvr = a.views > 0 ? ((a.leads||0)+(a.calls||0)) / a.views * 100 : 0;
+      const bCvr = b.views > 0 ? ((b.leads||0)+(b.calls||0)) / b.views * 100 : 0;
+      winner = aCvr >= bCvr ? ' — Variant A leads' : ' — Variant B leads';
+    }
+
+    banner.className = `sig-banner ${c.cls}`;
+    banner.innerHTML = `<span class="sig-banner-icon">${c.icon}</span><div class="sig-banner-text"><strong>${c.title}${winner}</strong><span>${c.desc}</span></div>`;
+    banner.hidden = false;
+  }
+
+  // --- Round Info Bar (days running + dates) ---
+  function renderRoundInfo(d) {
+    const bar = document.getElementById('round-info-bar');
+    if (!allRounds.length) { bar.hidden = true; return; }
+    const currentRound = activeRound || d.current_round;
+    const roundIdx = allRounds.findIndex(r => r.round_number === currentRound);
+    const round = allRounds[roundIdx];
+    if (!round || !round.started_at) { bar.hidden = true; return; }
+
+    const startDate = new Date(round.started_at.replace(' ', 'T') + (round.started_at.includes('Z') ? '' : 'Z'));
+    const startStr = startDate.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
+
+    const isLive = round.round_number === d.current_round;
+    let endDate, endStr, days;
+
+    if (isLive) {
+      endDate = new Date();
+      days = Math.max(1, Math.ceil((endDate - startDate) / 86400000));
+      bar.innerHTML =
+        `<div class="round-info-item"><strong>Round ${round.round_number}</strong></div>` +
+        `<div class="round-info-dot"></div>` +
+        `<div class="round-info-item">Running for <strong>${days} day${days !== 1 ? 's' : ''}</strong></div>` +
+        `<div class="round-info-dot"></div>` +
+        `<div class="round-info-item">Started <strong>${startStr}</strong></div>`;
+    } else {
+      const nextRound = allRounds[roundIdx + 1];
+      if (nextRound && nextRound.started_at) {
+        endDate = new Date(nextRound.started_at.replace(' ', 'T') + (nextRound.started_at.includes('Z') ? '' : 'Z'));
+      } else {
+        endDate = new Date();
+      }
+      endStr = endDate.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
+      days = Math.max(1, Math.ceil((endDate - startDate) / 86400000));
+      bar.innerHTML =
+        `<div class="round-info-item"><strong>Round ${round.round_number}</strong></div>` +
+        `<div class="round-info-dot"></div>` +
+        `<div class="round-info-item">Ran for <strong>${days} day${days !== 1 ? 's' : ''}</strong></div>` +
+        `<div class="round-info-dot"></div>` +
+        `<div class="round-info-item">From <strong>${startStr}</strong> to <strong>${endStr}</strong></div>`;
+    }
+    bar.hidden = false;
+  }
+
   function renderStats(d) {
     document.getElementById('loading').hidden = true;
     document.getElementById('dash-content').hidden = false;
@@ -626,7 +805,12 @@
     document.getElementById('total-views').textContent = t.views ?? '—';
     document.getElementById('total-leads').textContent = t.leads ?? '—';
     document.getElementById('total-calls').textContent = t.calls ?? '—';
-    const blCvr = t.views > 0 ? ((t.leads / t.views) * 100).toFixed(1) : '—';
+    // Qualified Calls: only surfaces for CAPI clients (server-side ≥30s calls). Hidden when none.
+    const qc = t.qualified_calls || 0;
+    document.getElementById('total-qcalls').textContent = qc;
+    document.getElementById('qcalls-cell').style.display = qc > 0 ? '' : 'none';
+    document.getElementById('qcalls-divider').style.display = qc > 0 ? '' : 'none';
+    const blCvr = t.views > 0 ? ((((t.leads||0) + (t.calls||0)) / t.views) * 100).toFixed(1) : '—';
     document.getElementById('blended-cvr').textContent = blCvr !== '—' ? `${blCvr}%` : '—';
 
     document.getElementById('updated-label').textContent = `Updated ${new Date(d.updated_at).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', hour12: true })} PT`;
@@ -641,6 +825,23 @@
     document.getElementById('desk-leads').textContent = desk.leads  ?? '—';
     document.getElementById('desk-calls').textContent = desk.calls  ?? '—';
     document.getElementById('desk-cvr').textContent   = desk.lead_cvr != null ? `${desk.lead_cvr}%` : '—';
+
+    // Per-variant device stats
+    ['a', 'b'].forEach(v => {
+      const vd = d.variant_devices?.[v] || {};
+      const vm = vd.mobile || {}, vk = vd.desktop || {};
+      document.getElementById(`${v}-mob-views`).textContent  = vm.views  ?? '—';
+      document.getElementById(`${v}-mob-leads`).textContent  = vm.leads  ?? '—';
+      document.getElementById(`${v}-mob-calls`).textContent  = vm.calls  ?? '—';
+      document.getElementById(`${v}-mob-cvr`).textContent    = vm.lead_cvr != null ? `${vm.lead_cvr}%` : '—';
+      document.getElementById(`${v}-desk-views`).textContent = vk.views  ?? '—';
+      document.getElementById(`${v}-desk-leads`).textContent = vk.leads  ?? '—';
+      document.getElementById(`${v}-desk-calls`).textContent = vk.calls  ?? '—';
+      document.getElementById(`${v}-desk-cvr`).textContent   = vk.lead_cvr != null ? `${vk.lead_cvr}%` : '—';
+    });
+
+    renderRoundInfo(d);
+    renderSigBanner(d);
 
     renderAuditLog(d.audit_log || []);
     renderEventsTable(d.events || []);
@@ -688,7 +889,7 @@
   function renderEventsTable(events) {
     currentEvents = events;
     const tbody = document.getElementById('events-body');
-    const filtered = activeFilter === 'all' ? events : events.filter(e => e.event_type === activeFilter);
+    const filtered = activeFilter === 'all' ? events : activeFilter === 'all-leads' ? events.filter(e => e.event_type === 'lead' || e.event_type === 'call') : events.filter(e => e.event_type === activeFilter);
     const pageSize = rowLimit >= 9999 ? filtered.length : rowLimit;
     const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(filtered.length / pageSize)) : 1;
     if (eventsPage > totalPages) eventsPage = totalPages;
