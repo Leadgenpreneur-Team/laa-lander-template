@@ -68,6 +68,66 @@ function json(data, status = 200) {
   });
 }
 
+// ── Meta Conversions API ────────────────────────────────────────────────────
+// Server-side events fired alongside the client-side Pixel. Per-client config
+// via secrets — if META_DATASET_ID / META_CAPI_TOKEN are unset, every call here
+// is a silent no-op, so landers without CAPI deploy and run unchanged.
+const META_API_VERSION = 'v19.0';
+
+async function sha256Hex(input) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+const normEmail = e => (e ? String(e).trim().toLowerCase() : null);
+const normName  = n => (n ? String(n).trim().toLowerCase() : null);
+// US-centric: strip non-digits, prepend country code 1 if a bare 10-digit number.
+function normPhone(p) {
+  if (!p) return null;
+  let d = String(p).replace(/\D/g, '');
+  if (!d) return null;
+  if (d.length === 10) d = '1' + d;
+  return d;
+}
+
+// Builds Meta user_data. PII (em/ph/fn/ln) is SHA-256 hashed; fbc/fbp/ip/ua are sent raw.
+async function buildUserData({ email, phone, firstName, lastName, fbc, fbp, ip, ua } = {}) {
+  const ud = {};
+  const em = normEmail(email); if (em) ud.em = [await sha256Hex(em)];
+  const ph = normPhone(phone); if (ph) ud.ph = [await sha256Hex(ph)];
+  const fn = normName(firstName); if (fn) ud.fn = [await sha256Hex(fn)];
+  const ln = normName(lastName);  if (ln) ud.ln = [await sha256Hex(ln)];
+  if (fbc) ud.fbc = fbc;
+  if (fbp) ud.fbp = fbp;
+  if (ip)  ud.client_ip_address = ip;
+  if (ua)  ud.client_user_agent = ua;
+  return ud;
+}
+
+// Fires one event to the Conversions API. Returns {skipped:true} when CAPI isn't
+// configured for this client. event_id matches the browser Pixel event for dedup.
+async function sendMetaCapi(env, { eventName, eventId, eventSourceUrl, actionSource = 'website', userData, customData }) {
+  if (!env.META_DATASET_ID || !env.META_CAPI_TOKEN) return { skipped: true };
+  const payload = {
+    data: [{
+      event_name: eventName,
+      event_time: Math.floor(Date.now() / 1000),
+      action_source: actionSource,
+      ...(eventId ? { event_id: eventId } : {}),
+      ...(eventSourceUrl ? { event_source_url: eventSourceUrl } : {}),
+      user_data: userData,
+      ...(customData ? { custom_data: customData } : {}),
+    }],
+    ...(env.META_TEST_EVENT_CODE ? { test_event_code: env.META_TEST_EVENT_CODE } : {}),
+  };
+  const res = await fetch(
+    `https://graph.facebook.com/${META_API_VERSION}/${env.META_DATASET_ID}/events?access_token=${env.META_CAPI_TOKEN}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+  );
+  const response = await res.json().catch(() => ({}));
+  return { skipped: false, status: res.status, response };
+}
+
 // Cached per worker instance (cleared on each deploy)
 let _cachedRound = null;
 
@@ -104,7 +164,7 @@ async function trackEvent(env, round, variant, eventType, utms = {}, extra = {})
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const p   = url.pathname;
 
@@ -113,7 +173,7 @@ export default {
       if (!env.DB) return json({ ok: false }, 500);
       let body;
       try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
-      const { event_type, variant, device, name, email, phone, utms = {} } = body;
+      const { event_type, variant, device, name, email, phone, utms = {}, event_id } = body;
       if (!['pageview','lead','call'].includes(event_type)) return json({ error: 'invalid event' }, 400);
       if (!['a','b'].includes(variant)) return json({ error: 'invalid variant' }, 400);
       const round = await getCurrentRound(env);
@@ -125,7 +185,80 @@ export default {
         keyword: utms.keyword || null, match_type: utms.match_type || null,
         network: utms.network || null,
       }, { device, lead_name: name, lead_email: email, lead_phone: phone }).catch(() => {});
+
+      // META-ONLY: fire the server-side Meta Lead (deduped against the browser Pixel via
+      // event_id). sendMetaCapi no-ops unless META_DATASET_ID + META_CAPI_TOKEN are set, so
+      // a Google-Ads-only client triggers nothing here. The worker never touches Google Ads.
+      // _fbp/_fbc are first-party cookies on this domain and ride along on the same-origin fetch.
+      if (event_type === 'lead') {
+        const cookie = request.headers.get('Cookie') || '';
+        const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+        const userData = await buildUserData({
+          email, phone,
+          firstName: parts[0] || null,
+          lastName:  parts.length > 1 ? parts.slice(1).join(' ') : null,
+          fbc: getCookie(cookie, '_fbc'),
+          fbp: getCookie(cookie, '_fbp'),
+          ip:  request.headers.get('CF-Connecting-IP'),
+          ua:  request.headers.get('User-Agent'),
+        });
+        ctx.waitUntil(sendMetaCapi(env, {
+          eventName: 'Lead',
+          eventId: event_id || null,
+          eventSourceUrl: request.headers.get('Referer'),
+          actionSource: 'website',
+          userData,
+        }).catch(() => {}));
+      }
       return json({ ok: true });
+    }
+
+    // ── GHL qualified-call webhook → Meta Contact event ───────────────────────
+    // GHL fires this on a completed call; we gate on duration and send a
+    // server-side Contact event matched on the caller's hashed phone number.
+    if (p === '/api/ghl-call' && request.method === 'POST') {
+      if (!env.GHL_WEBHOOK_SECRET || request.headers.get('X-Webhook-Secret') !== env.GHL_WEBHOOK_SECRET) {
+        return json({ error: 'unauthorized' }, 401);
+      }
+      let body;
+      try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
+      // GHL nests the webhook's Custom Data under `customData`; standard contact fields sit at the
+      // top level. Prefer customData, fall back to top-level so either GHL config shape works.
+      const cd   = (body.customData && typeof body.customData === 'object') ? body.customData : {};
+      const pick = (k) => { const v = cd[k]; return (v != null && v !== '') ? v : body[k]; };
+      const duration    = parseInt(pick('call_duration'), 10) || 0;
+      const minDuration = parseInt(env.CALL_MIN_DURATION, 10) || 30;
+      if (duration < minDuration) return json({ ok: true, skipped: 'below_min_duration', duration });
+
+      // fbclid comes from GHL's captured attribution (set when the visitor first landed) → far
+      // stronger match than phone alone for a call.
+      const attr   = (body.contact && (body.contact.attributionSource || body.contact.lastAttributionSource)) || {};
+      const fbclid = pick('fbclid') || attr.fbclid || null;
+      const userData = await buildUserData({
+        phone: pick('phone'),
+        firstName: pick('first_name'),
+        lastName:  pick('last_name'),
+        // No browser session for a call; derive fbc from the captured fbclid when available.
+        fbc: fbclid ? `fb.1.${Date.now()}.${fbclid}` : null,
+      });
+      if (!userData.ph && !userData.em) return json({ ok: true, skipped: 'no_match_key' });
+
+      const result = await sendMetaCapi(env, {
+        eventName: 'Contact',
+        eventId: body.event_id || null,
+        actionSource: 'phone_call',
+        userData,
+        customData: { call_duration: duration },
+      });
+      // Reports dashboard: log the qualified call ONLY when CAPI actually fired the Contact
+      // (i.e. CAPI is configured). No variant — GHL can't attribute the call to A/B.
+      if (env.DB && result && result.skipped !== true) {
+        const round = await getCurrentRound(env);
+        ctx.waitUntil(env.DB.prepare(
+          "INSERT INTO events (round, variant, event_type, device, lead_phone) VALUES (?, NULL, 'qualified_call', 'phone', ?)"
+        ).bind(round, pick('phone') || null).run().catch(() => {}));
+      }
+      return json({ ok: true, capi: result });
     }
 
     if (p === '/api/ab-stats') {
@@ -173,12 +306,16 @@ export default {
         }
       }
 
-      const [stats, devices, recent, audit] = await Promise.all([
+      const [stats, devices, variantDevices, daily, recent, audit, qcalls] = await Promise.all([
         env.DB.prepare(`SELECT variant, event_type, COUNT(*) as count FROM events ${WHERE} GROUP BY variant, event_type`).bind(...binds).all(),
         env.DB.prepare(`SELECT device, event_type, COUNT(*) as count FROM events ${WHERE} GROUP BY device, event_type`).bind(...binds).all(),
-        env.DB.prepare(`SELECT id, round, variant, event_type, device, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, gclid, campaign_id, ad_group_id, keyword, match_type, network, created_at FROM events ${WHERE} ORDER BY id DESC LIMIT 200`).bind(...binds).all(),
+        env.DB.prepare(`SELECT variant, device, event_type, COUNT(*) as count FROM events ${WHERE} GROUP BY variant, device, event_type`).bind(...binds).all(),
+        env.DB.prepare(`SELECT DATE(created_at) as day, variant, event_type, COUNT(*) as count FROM events ${WHERE} GROUP BY day, variant, event_type ORDER BY day`).bind(...binds).all(),
+        env.DB.prepare(`SELECT id, round, variant, event_type, device, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, gclid, campaign_id, ad_group_id, keyword, match_type, network, created_at FROM events ${WHERE} ORDER BY id DESC LIMIT 100`).bind(...binds).all(),
         env.DB.prepare(`SELECT id, action, detail, created_at FROM audit_log ORDER BY id DESC LIMIT 100`).all(),
+        env.DB.prepare(`SELECT COUNT(*) as count FROM events ${WHERE} AND event_type = 'qualified_call'`).bind(...binds).all(),
       ]);
+
       const variants = ['a', 'b'];
       const counts = {};
       for (const v of variants) counts[v] = { pageview: 0, lead: 0, call: 0 };
@@ -192,15 +329,22 @@ export default {
         if (!devCounts[d]) devCounts[d] = { pageview: 0, lead: 0, call: 0 };
         if (devCounts[d][row.event_type] !== undefined) devCounts[d][row.event_type] += row.count;
       }
-      const buildDevice = d => {
-        const s = devCounts[d] || { pageview: 0, lead: 0, call: 0 };
-        return { views: s.pageview, leads: s.lead, calls: s.call, lead_cvr: s.pageview > 0 ? +((s.lead / s.pageview) * 100).toFixed(1) : 0 };
+      const varDevCounts = {};
+      for (const row of variantDevices.results) {
+        const v = row.variant, d = row.device || 'unknown';
+        if (!varDevCounts[v]) varDevCounts[v] = {};
+        if (!varDevCounts[v][d]) varDevCounts[v][d] = { pageview: 0, lead: 0, call: 0 };
+        if (varDevCounts[v][d][row.event_type] !== undefined) varDevCounts[v][d][row.event_type] += row.count;
+      }
+      const buildDevice = (d, src) => {
+        const s = (src || devCounts)[d] || { pageview: 0, lead: 0, call: 0 };
+        return { views: s.pageview, leads: s.lead, calls: s.call, lead_cvr: s.pageview > 0 ? +(((s.lead + s.call) / s.pageview) * 100).toFixed(1) : 0 };
       };
       const variantData = {};
       let totalViews = 0, totalLeads = 0, totalCalls = 0;
       for (const v of variants) {
         const c = counts[v];
-        variantData[v] = { views: c.pageview, leads: c.lead, calls: c.call, lead_cvr: c.pageview > 0 ? +((c.lead / c.pageview) * 100).toFixed(1) : 0 };
+        variantData[v] = { views: c.pageview, leads: c.lead, calls: c.call, lead_cvr: c.pageview > 0 ? +(((c.lead + c.call) / c.pageview) * 100).toFixed(1) : 0 };
         totalViews += c.pageview; totalLeads += c.lead; totalCalls += c.call;
       }
       return json({
@@ -208,8 +352,13 @@ export default {
         current_round: currentRoundNum,
         round: targetRound,
         variants: variantData,
-        total: { views: totalViews, leads: totalLeads, calls: totalCalls },
+        total: { views: totalViews, leads: totalLeads, calls: totalCalls, qualified_calls: (qcalls.results[0] && qcalls.results[0].count) || 0 },
         devices: { mobile: buildDevice('mobile'), desktop: buildDevice('desktop') },
+        variant_devices: {
+          a: { mobile: buildDevice('mobile', varDevCounts['a'] || {}), desktop: buildDevice('desktop', varDevCounts['a'] || {}) },
+          b: { mobile: buildDevice('mobile', varDevCounts['b'] || {}), desktop: buildDevice('desktop', varDevCounts['b'] || {}) },
+        },
+        daily: daily.results,
         events: recent.results,
         audit_log: audit.results,
         updated_at: new Date().toISOString(),
@@ -221,7 +370,7 @@ export default {
       if (!env.DB) return json({ error: 'DB not configured' }, 500);
       const s = url.searchParams.get('start'), e = url.searchParams.get('end');
       const hasRange = s && e;
-      const dateFilter = hasRange ? "WHERE event_type = 'lead' AND created_at >= ? AND created_at <= ?" : "WHERE event_type = 'lead'";
+      const dateFilter = hasRange ? "WHERE (archived IS NULL OR archived = 0) AND event_type IN ('lead','call') AND created_at >= ? AND created_at <= ?" : "WHERE (archived IS NULL OR archived = 0) AND event_type IN ('lead','call')";
       const binds = hasRange ? [s + ' 00:00:00', e + ' 23:59:59'] : [];
       const result = await env.DB.prepare(`SELECT id, round, variant, event_type, device, lead_name, lead_email, lead_phone, utm_source, utm_medium, utm_campaign, utm_content, utm_term, gclid, campaign_id, ad_group_id, keyword, match_type, network, created_at FROM events ${dateFilter} ORDER BY id DESC LIMIT 1000`).bind(...binds).all();
       return json({ events: result.results });
@@ -264,11 +413,22 @@ export default {
       if (!html.includes('/api/track-event')) {
         const leadScript = `<script>
 (function() {
+  if (sessionStorage.getItem('ldr_lead_tracked')) return;
   var m = document.cookie.match(/(?:^|;\\s*)ab_variant=([^;]+)/);
   var variant = (m && ['a','b'].includes(m[1])) ? m[1] : 'a';
   var p = new URLSearchParams(window.location.search);
   var device = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'mobile' : 'desktop';
   var fullName  = p.get('name') || null;
+  sessionStorage.setItem('ldr_lead_tracked', '1');
+  // META-ONLY: the worker owns the Lead event for Facebook/Meta only. It never fires
+  // or touches Google Ads conversions — those are your gtag snippet in the
+  // CONVERSION TRACKING block, which runs independently. The fbq Lead below fires
+  // ONLY when the Meta Pixel is present (window.fbq defined). No Pixel = no fire.
+  // One event ID shared by the browser Pixel and the server CAPI event → Meta dedupes them.
+  var eventId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'ld-' + Date.now() + '-' + Math.round(Math.random() * 1e9);
+  if (typeof window.fbq === 'function') {
+    try { fbq('track', 'Lead', {}, { eventID: eventId }); } catch (e) {}
+  }
   fetch('/api/track-event', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -279,6 +439,7 @@ export default {
       name:  fullName,
       email: p.get('email'),
       phone: p.get('phone'),
+      event_id: eventId,
       utms: {
         utm_source:   p.get('utm_source')   || sessionStorage.getItem('ldr_utm_source'),
         utm_medium:   p.get('utm_medium')   || sessionStorage.getItem('ldr_utm_medium'),
@@ -343,9 +504,14 @@ export default {
       if (isNew && env.DB && !isBot(request)) {
         const ua     = request.headers.get('User-Agent') || '';
         const device = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) ? 'mobile' : 'desktop';
-        getCurrentRound(env).then(round =>
-          trackEvent(env, round, variant, 'pageview', extractUtms(url), { device }).catch(() => {})
-        ).catch(() => {});
+        const utms   = extractUtms(url);
+        // waitUntil keeps the worker alive until the write lands — without it the
+        // pageview INSERT is cancelled when the response returns (intermittent loss).
+        ctx.waitUntil(
+          getCurrentRound(env)
+            .then(round => trackEvent(env, round, variant, 'pageview', utms, { device }))
+            .catch(() => {})
+        );
       }
 
       const variantUrl = new URL(url);
