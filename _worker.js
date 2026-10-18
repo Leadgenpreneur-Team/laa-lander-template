@@ -546,6 +546,15 @@ export default {
       return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     }
 
+    // ── Internal files: never serve these publicly ───────────────────────────
+    // `wrangler pages deploy .` uploads every file in the repo folder, so block
+    // the ones that describe the setup (database id, schema, notes).
+    const lower = p.toLowerCase();
+    if (['/readme.md', '/wrangler.toml', '/schema.sql', '/.gitignore'].includes(lower) ||
+        lower.startsWith('/.git/') || lower.endsWith('.md')) {
+      return new Response('Not found', { status: 404 });
+    }
+
     // ── Everything else: static assets ───────────────────────────────────────
     return env.ASSETS.fetch(request);
   },

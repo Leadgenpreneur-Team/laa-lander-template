@@ -1,9 +1,8 @@
-# LAA-lander-template
+# laa-lander-template
 
-**Type:** DJM A/B landing page template
-**Managed by:** Strive Marketing / Dirty Job Marketing
+The starting point for every lander deployed with the **deploy-lander-laa** skill. It's a plain HTML landing page setup with a built-in 50/50 split test, lead and call tracking, and a password-protected reports dashboard. There's no build step: Cloudflare Pages serves it directly.
 
-Plain HTML landing page template with built-in A/B traffic splitting, lead/call tracking, and a password-protected reports dashboard. No build step — Cloudflare Pages serves it directly.
+You don't set this up by hand. The skill creates a private copy of this repo for each lander (`lander-[slug]`), adds your pages, and wires up Cloudflare. This README explains what's in the box.
 
 ---
 
@@ -11,138 +10,71 @@ Plain HTML landing page template with built-in A/B traffic splitting, lead/call 
 
 | File | Purpose |
 |------|---------|
-| `index-a.html` | Variant A — exported from Claude Design, added by Claude Code |
-| `index-b.html` | Variant B — exported from Claude Design, added by Claude Code |
-| `thank-you.html` | Thank-you page — exported from Claude Design, added by Claude Code |
-| `reports.html` | A/B stats dashboard (Basic Auth protected, tokens auto-injected by worker) |
-| `_worker.js` | Cloudflare Worker: A/B routing, API endpoints, reports auth, DB logic |
-| `schema.sql` | D1 database schema — run once during setup |
-| `favicon.png` | Client favicon — added by Claude Code |
-| `uploads/` | Client-provided photos |
-| `assets/` | Fallback/default photos |
-
-> `index-a.html`, `index-b.html`, and `thank-you.html` are **not included** in this template. They come from the Claude Design export and are wired up by Claude Code during setup.
+| `_worker.js` | Cloudflare worker: the A/B split, `/a` and `/b` previews, `/thank-you`, the `/reports` login, the tracking API, and the 404 for internal files |
+| `reports.html` | The reports dashboard (login protected; the worker fills in its settings) |
+| `schema.sql` | The D1 database tables, run once during setup |
+| `index-a.html` | Variant A. Added by the skill, not in the template |
+| `index-b.html` | Variant B. Added by the skill, not in the template |
+| `thank-you.html` | Thank-you page. Added by the skill, not in the template |
+| `assets/` | Images, logo, and favicon. Added by the skill |
 
 ---
 
-## Setup — Tell Claude Code
+## Routes
 
-Follow the SOP steps in order. Each step is a single prompt to Claude Code.
-
-### Step 1 — Create GitHub repo
-Use this template: **Use this template** → **Create a new repository**
-- Name: `lander-[client-slug]` (e.g. `lander-suncoast-dumpsters`)
-- Visibility: Private
-
-### Step 2 — Export from Claude Design
-Export all three files from the DJM lander template in Claude Design:
-- `index-a.html` (Variant A)
-- `index-b.html` (Variant B)
-- `thank-you.html`
-
-### Step 3 — Wire it up
-Tell Claude Code: *"Here are the three HTML files from Claude Design. Add them to the repo and wire everything up."*
-
-Claude Code adds tracking scripts, call tracking, noindex tags, and favicon, then uploads via GitHub API.
-
-### Step 4 — Connect to Cloudflare Pages
-1. Cloudflare → Workers & Pages → Create → Pages → Connect to Git
-2. Select the repo → Build command: *(blank)* → Output directory: *(blank)*
-3. Save and Deploy
-
-### Step 5 — Create D1 database and set environment variables
-Tell Claude Code:
-
-> "Set up the D1 database for this project. The Cloudflare Pages project name is `[project-name]`. Then set these environment variables on the Pages project via the Cloudflare API:
-> - `REPORTS_USER`: `[project-name]`
-> - `REPORTS_PASS`: `[project-name with all dashes removed]`
-> - `REPORTS_TOKEN`: `[project-name with all dashes removed]`
-> - `PROJECT_NAME`: `[Human readable title, e.g. "ABC Dumpster Lander"]`
-> - `PROJECT_SLUG`: `[project-name]`
-> - `VARIANT_A_LABEL`: `Variant A — [short description]`
-> - `VARIANT_A_URL`: `/`
-> - `VARIANT_B_LABEL`: `Variant B — [short description]`
-> - `VARIANT_B_URL`: `/b`"
-
-### Step 6 — Add URL routing worker
-Tell Claude Code:
-
-> "Write a complete `_worker.js` for the `[project-name]` Cloudflare Pages project that routes `/` with a 50/50 A/B split, `/b` always to Variant B, `/thank-you` to the thank-you page, `/reports` with basic auth and token injection, all `/api/*` routes for the dashboard, and everything else to static assets. Catch Cloudflare pretty-URL redirects so browser URLs stay clean. Upload via GitHub API."
-
-### Step 7 — Add custom domain *(when ready)*
-Tell Claude Code: *"Add the custom domain `[domain]` to the `[project-name]` Cloudflare Pages project via the API."*
-
-The reports page works automatically on any domain — no extra steps needed.
+| URL | What it does |
+|-----|--------------|
+| `/` | Splits visitors 50/50 between A and B. The choice is saved in the `ab_variant` cookie for 30 days |
+| `/a` | Always shows Variant A (for previewing, not counted as split traffic) |
+| `/b` | Always shows Variant B |
+| `/thank-you` | Thank-you page. Logs the lead from the GHL redirect (`?name=&email=&phone=`) |
+| `/reports` | Reports dashboard, behind a username and password |
+| `/api/*` | Tracking and dashboard endpoints used by the pages |
+| `/README.md`, `/wrangler.toml`, `/schema.sql`, any `.md` | Always 404, so setup details are never public |
 
 ---
 
-## Environment Variables Reference
+## Settings (Cloudflare secrets)
 
-All set via Cloudflare API (no manual edits to any files needed).
+The skill sets these on the Pages project. They are never written into any file in the repo.
 
-| Variable | Example value | Purpose |
-|----------|--------------|---------|
-| `REPORTS_USER` | `lander-suncoast-dumpsters` | Reports page login username |
-| `REPORTS_PASS` | `landersuncoastdumpsters` | Reports page login password (no dashes) |
-| `REPORTS_TOKEN` | `landersuncoastdumpsters` | API token used by the dashboard JS |
-| `PROJECT_NAME` | `Suncoast Dumpster Lander` | Shown in reports page title and subtitle |
-| `PROJECT_SLUG` | `lander-suncoast-dumpsters` | Used for CSV export filenames |
-| `VARIANT_A_LABEL` | `Variant A — Light Hero` | Label shown on the reports A card |
-| `VARIANT_A_URL` | `/` | Link shown on the reports A card |
-| `VARIANT_B_LABEL` | `Variant B — Dark Hero` | Label shown on the reports B card |
-| `VARIANT_B_URL` | `/b` | Link shown on the reports B card |
+| Secret | Purpose |
+|--------|---------|
+| `REPORTS_USER` | Reports login username |
+| `REPORTS_PASS` | Reports login password. The skill generates a random one |
+| `REPORTS_TOKEN` | Random token the dashboard uses for its data calls. You never type it |
+| `PROJECT_NAME` | Business name shown on the dashboard and in CSV export names |
+| `PROJECT_SLUG` | Used in CSV export file names |
+| `VARIANT_A_URL` | Preview link on the dashboard's A card: `/a` |
+| `VARIANT_B_URL` | Preview link on the dashboard's B card: `/b` |
+| `META_DATASET_ID`, `META_CAPI_TOKEN`, `GHL_WEBHOOK_SECRET`, `CALL_MIN_DURATION` | Optional. Only for Meta Conversions API (see the skill's `references/meta-capi.md`) |
 
-> `REPORTS_PASS` and `REPORTS_TOKEN` should always be the same value and never contain dashes (shorter, cleaner when hidden behind password dots).
+Variant descriptions for each test round live in the `rounds` table in D1, not in secrets.
 
-> The reports page subtitle (domain + project name) is generated automatically from the live request URL — it always reflects the current domain, including after a custom domain is added.
+> Never put the reports password in this README or any other file. Everything in the repo folder is uploaded to Cloudflare on deploy, and the README lives in GitHub.
 
 ---
 
-## Reports Page
+## Tracking placeholders
+
+The skill pastes tracking code into these comment blocks:
+
+- `TRACKING SCRIPTS (HEAD)` in all three pages: Google Ads tag, Meta Pixel base code
+- `TRACKING SCRIPTS (BODY)` in all three pages: call tracking number swap script
+- `CONVERSION TRACKING` in `thank-you.html` only: Google Ads conversion event
+
+Every `tel:` link should carry the `data-tel-link` attribute so call clicks show up in reports. The skill adds it automatically.
+
+---
+
+## Lander details
+
+Fill this in after deploy. **No passwords here.**
 
 | | |
 |---|---|
-| URL | `[project-domain]/reports` |
-| Username | Value of `REPORTS_USER` env var |
-| Password | Value of `REPORTS_PASS` env var |
-
-Log these in the client's ClickUp task after setup.
-
----
-
-## A/B Testing
-
-- Traffic split 50/50 between `index-a.html` and `index-b.html` via the Cloudflare Worker
-- Variant assigned on first visit, persisted via `ab_variant` cookie for 30 days
-- Bots excluded from pageview counts
-- Each pageview logged to D1 with variant, device, and all UTM params
-- Leads and calls logged via `/api/track-event` POST from the lander HTML
-- Dashboard auto-refreshes every 30 seconds
-
----
-
-## Client Info
-
-| | |
-|---|---|
-| Business | *(fill in)* |
-| Location | *(fill in)* |
-| Phone | *(fill in)* |
-| Service Area | *(fill in)* |
-| GHL Form ID | *(fill in)* |
-| Live URL | *(fill in after domain connected)* |
-| GitHub | *(fill in)* |
-| Reports URL | *(fill in)* |
-| Reports Login | *(fill in — username / password)* |
-
----
-
-## Tracking Scripts
-
-Search for these placeholders in both index files and `thank-you.html`:
-
-- `TRACKING SCRIPTS (HEAD)` — Google Ads Global Site Tag, Meta Pixel base code
-- `TRACKING SCRIPTS (BODY)` — noscript tags, body-level scripts
-- Conversion events go in `thank-you.html` only
-
-Tell Claude Code and paste the script codes — it inserts them in the right spots.
+| Business | |
+| Live URL | |
+| Preview A / B | `/a` and `/b` |
+| Reports URL | `/reports` |
+| Deployed | |
