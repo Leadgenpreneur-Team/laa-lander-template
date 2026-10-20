@@ -13,6 +13,7 @@ You don't set this up by hand. The skill creates a private copy of this repo for
 | `_worker.js` | Cloudflare worker: the A/B split, `/a` and `/b` previews, `/thank-you`, the `/reports` login, the tracking API, and the 404 for internal files |
 | `reports.html` | The reports dashboard (login protected; the worker fills in its settings) |
 | `schema.sql` | The D1 database tables, run once during setup |
+| `migrations/` | Add-column scripts for landers deployed before a schema change. New landers don't need them (`schema.sql` already has every column) |
 | `index-a.html` | Variant A. Added by the skill, not in the template |
 | `index-b.html` | Variant B. Added by the skill, not in the template |
 | `thank-you.html` | Thank-you page. Added by the skill, not in the template |
@@ -28,7 +29,8 @@ You don't set this up by hand. The skill creates a private copy of this repo for
 | `/a` | Always shows Variant A (for previewing, not counted as split traffic) |
 | `/b` | Always shows Variant B |
 | `/thank-you` | Thank-you page. Logs the lead from the GHL redirect (`?name=&email=&phone=`) |
-| `/reports` | Reports dashboard, behind a username and password |
+| `/reports` | Split Test Dashboard, behind a username and password. Shows the domain at the top, no logo. **Start Round** begins the days-running clock when ads go live; **Pause Round / Resume Round** freezes it |
+| `?qa=1` on any page | Marks that browser as a team test session for 30 days, so its visits and leads are never counted. The dashboard's A/B preview links add it automatically |
 | `/api/*` | Tracking and dashboard endpoints used by the pages |
 | `/README.md`, `/wrangler.toml`, `/schema.sql`, any `.md` | Always 404, so setup details are never public |
 
@@ -45,8 +47,6 @@ The skill sets these on the Pages project. They are never written into any file 
 | `REPORTS_TOKEN` | Random token the dashboard uses for its data calls. You never type it |
 | `PROJECT_NAME` | Business name shown on the dashboard and in CSV export names |
 | `PROJECT_SLUG` | Used in CSV export file names |
-| `VARIANT_A_URL` | Preview link on the dashboard's A card: `/a` |
-| `VARIANT_B_URL` | Preview link on the dashboard's B card: `/b` |
 | `META_DATASET_ID`, `META_CAPI_TOKEN`, `GHL_WEBHOOK_SECRET`, `CALL_MIN_DURATION` | Optional. Only for Meta Conversions API (see the skill's `references/meta-capi.md`) |
 
 Variant descriptions for each test round live in the `rounds` table in D1, not in secrets.
